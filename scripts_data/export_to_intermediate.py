@@ -153,6 +153,10 @@ def construct_meshes(seq_p, layers, use_mano, use_object, use_smplx, no_image, u
     viewer_data = ViewerData(Rt, K, cols, rows, imgnames)
 
     for hand in ['left', 'right']:
+        save_folder = os.path.join(SAVE_ROOT, subject, seq_name, f'{view_idx}_{hand}')
+        if os.path.exists(os.path.join(save_folder, '{:05d}.pkl'.format(0))):
+            continue
+
         hand_letter = hand[0]
 
         # Calcualte distance from each hand point to closest object
@@ -160,7 +164,6 @@ def construct_meshes(seq_p, layers, use_mano, use_object, use_smplx, no_image, u
         knn_obj_verts = torch.tensor(data['cam_coord'][f'verts.object'][:, view_idx, :, :])
         knn_dists, knn_idx = compute_dist_mano_to_obj(knn_hand_verts, knn_obj_verts, None, -1, 100)
 
-        save_folder = os.path.join(SAVE_ROOT, subject, seq_name, f'{view_idx}_{hand}')
         for i in range(num_frames):
             pkl_path = os.path.join(save_folder, '{:05d}.pkl'.format(i))
             json_path = os.path.join(save_folder, '{:05d}.json'.format(i))
@@ -197,13 +200,13 @@ def construct_meshes(seq_p, layers, use_mano, use_object, use_smplx, no_image, u
 
             pkl_write(pkl_path, save_dict, auto_mkdir=True)
 
-            for key in save_dict.keys():    # Convert all torch tensors to numpy for serialization
-                if isinstance(save_dict[key], np.ndarray):
-                    save_dict[key] = save_dict[key].tolist()
+            # for key in save_dict.keys():    # Convert all torch tensors to numpy for serialization
+            #     if isinstance(save_dict[key], np.ndarray):
+            #         save_dict[key] = save_dict[key].tolist()
+            #
+            # json_write(json_path, save_dict, auto_mkdir=True)
 
-            json_write(json_path, save_dict, auto_mkdir=True)
-
-            shutil.copy(imgnames[i], img_path)
+            shutil.copy(imgnames[i], img_path)  # TODO: Copy the image file. Will eventually make this a crop
 
     return meshes, viewer_data
 
@@ -229,7 +232,6 @@ def main():
     # args = parse_args()
     random.seed(1)
     headless = False
-    view_idx = 3
     object = True
     mano = True
     smplx = False
@@ -244,13 +246,14 @@ def main():
     all_processed_seqs = glob("./outputs/processed_verts/seqs/*/*.npy")
 
     for seq_idx, seq_p in enumerate(all_processed_seqs):
-        print(f"Rendering seq#{seq_idx+1}, seq: {seq_p}, view: {view_idx}")
-        seq_name = seq_p.split("/")[-1].split(".")[0]
-        sid = seq_p.split("/")[-2]
-        out_name = f"{sid}_{seq_name}_{view_idx}"
+        for view_idx in range(1, 9):
+            print(f"Rendering seq#{seq_idx+1}, seq: {seq_p}, view: {view_idx}")
+            seq_name = seq_p.split("/")[-1].split(".")[0]
+            sid = seq_p.split("/")[-2]
+            out_name = f"{sid}_{seq_name}_{view_idx}"
 
-        batch = viewer.load_data(seq_p, mano, object, smplx, no_image, distort, view_idx, subject_meta)
-        # viewer.render_seq(batch, out_folder=op.join("render_out", out_name))
+            batch = viewer.load_data(seq_p, mano, object, smplx, no_image, distort, view_idx, subject_meta)
+            # viewer.render_seq(batch, out_folder=op.join("render_out", out_name))
 
 
 if __name__ == "__main__":
