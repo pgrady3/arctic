@@ -68,6 +68,10 @@ def download_data(url_file, out_folder, dry_run):
 
         # Write the contents of the response to a file
         out_p = op.join(out_folder, filename)
+
+        if os.path.isfile(out_p):
+            continue
+
         os.makedirs(op.dirname(out_p), exist_ok=True)
         with open(out_p, "wb") as f:
             f.write(response.content)

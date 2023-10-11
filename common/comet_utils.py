@@ -84,8 +84,11 @@ def init_experiment(args):
     disabled = args.mute
     comet_url = args["comet_key"] if "comet_key" in args.keys() else None
 
-    api_key = os.environ["COMET_API_KEY"]
-    workspace = os.environ["COMET_WORKSPACE"]
+    # api_key = os.environ["COMET_API_KEY"]
+    # workspace = os.environ["COMET_WORKSPACE"]
+    api_key = 'xJqYcgmfc3CDf1rFSLMlXptPL'
+    workspace = 'pia32'
+
     if not args.cluster:
         if comet_url is None:
             experiment = comet_ml.Experiment(

@@ -1,4 +1,12 @@
 #!/bin/bash
+
+export ARCTIC_USERNAME=patrick.grady@gatech.edu
+export ARCTIC_PASSWORD=Devass1!m
+export SMPLX_USERNAME=patrick.grady@gatech.edu
+export SMPLX_PASSWORD=Devass1!m
+export MANO_USERNAME=patrick.grady@gatech.edu
+export MANO_PASSWORD=Devass1!m
+
 set -e
 
 echo "Downloading smaller files"

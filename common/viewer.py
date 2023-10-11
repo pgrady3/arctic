@@ -176,7 +176,8 @@ def dist2vc(dist_ro, dist_lo, dist_o, _cmap, tf_fn=None):
 def small_exp_map(_dist):
     dist = np.copy(_dist)
     # dist = 1.0 - np.clip(dist, 0, 0.1) / 0.1
-    dist = np.exp(-20.0 * dist)
+    # dist = np.exp(-20.0 * dist)
+    dist = np.exp(-100.0 * dist)
     return dist
 
 
