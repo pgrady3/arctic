@@ -30,7 +30,7 @@ def main():
     dev = "cuda:0"
     export_verts = True
 
-    sequences_to_process = glob(f"./data/arctic_data/data/raw_seqs/s01/*.mano.npy")
+    sequences_to_process = glob(f"./data/arctic_data/data/raw_seqs/*/*.mano.npy")
 
     with open(f"./data/arctic_data/data/meta/misc.json", "r") as f:
         misc = json.load(f)

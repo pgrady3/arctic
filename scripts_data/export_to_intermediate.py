@@ -252,7 +252,12 @@ def construct_meshes(seq_p, layers, use_mano, use_object, use_smplx, no_image, u
             orig_img_path = Path(imgnames[i])
             save_dict['orig_img_path'] = str(Path(*orig_img_path.parts[3:]))
 
-            crop_dict, new_intrinsics, out_of_frame = get_crop_coords(save_dict['hand_verts'], save_dict['intrinsics'], save_dict['image_size'])
+            crop_margin = 400
+            if view_idx == 0:   # If using the egocentric camera, do less cropping since the hands are much closer
+                crop_margin = 900
+
+            crop_dict, new_intrinsics, out_of_frame = get_crop_coords(save_dict['hand_verts'], save_dict['intrinsics'],
+                                                                      save_dict['image_size'], crop_margin=crop_margin)
             if out_of_frame:
                 continue
 

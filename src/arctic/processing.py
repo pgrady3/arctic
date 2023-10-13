@@ -414,6 +414,17 @@ def process_seq(task, export_verts=False):
     with torch.no_grad():
         mano_p, dev, statcams, layers, pbar = task
 
+        sid, seqname = mano_p.split("/")[-2:]
+        if export_verts:
+            out_p = f"./outputs/processed_verts/seqs/{sid}/{seqname}"
+        else:
+            out_p = f"./outputs/processed/seqs/{sid}/{seqname}"
+        out_p = out_p.replace(".mano", "").replace("/annot", "")
+
+        if os.path.exists(out_p):
+            print('Skipping, already found', out_p)
+            return
+
         image_sizes = {}
         for sub in misc.keys():
             image_sizes[sub] = misc[sub]["image_size"]
@@ -479,14 +490,7 @@ def process_seq(task, export_verts=False):
         out["bbox"] = out_bbox_list
         out["params"] = batch_list
 
-        sid, seqname = mano_p.split("/")[-2:]
-        if export_verts:
-            out_p = f"./outputs/processed_verts/seqs/{sid}/{seqname}"
-        else:
-            out_p = f"./outputs/processed/seqs/{sid}/{seqname}"
-        out_p = out_p.replace(".mano", "").replace("/annot", "")
         out_folder = op.dirname(out_p)
-
         if not op.exists(out_folder):
             os.makedirs(out_folder)
 
