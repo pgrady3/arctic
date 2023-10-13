@@ -155,6 +155,7 @@ def construct_meshes(seq_p, layers, use_mano, use_object, use_smplx, no_image, u
     for hand in ['left', 'right']:
         save_folder = os.path.join(SAVE_ROOT, subject, seq_name, f'{view_idx}_{hand}')
         if os.path.exists(os.path.join(save_folder, '{:05d}.pkl'.format(0))):
+            print('already found, skipping')
             continue
 
         hand_letter = hand[0]
@@ -179,7 +180,7 @@ def construct_meshes(seq_p, layers, use_mano, use_object, use_smplx, no_image, u
             save_dict['image_size'] = [rows, cols]
             # save_dict['extrinsics'] = Rt[i, :, :]
             save_dict['hand_verts'] = vis_dict[hand]['v3d'][i, :, :]
-            save_dict['hand_faces'] = vis_dict[hand]['f3d']
+            # save_dict['hand_faces'] = vis_dict[hand]['f3d']
             save_dict['hand_joints'] = data['cam_coord'][f'joints.{hand}'][i, view_idx, :, :]
             save_dict['hand_dist'] = knn_dists[i, :].numpy()
 
@@ -197,6 +198,12 @@ def construct_meshes(seq_p, layers, use_mano, use_object, use_smplx, no_image, u
             save_dict['mano_rot'] = solved_rot
             save_dict['mano_trans'] = solved_trans
             save_dict['hand'] = hand
+            save_dict['subject'] = subject
+            save_dict['seq_name'] = seq_name
+            save_dict['view_idx'] = view_idx
+
+            img_path = Path(imgnames[i])
+            save_dict['orig_img_path'] = str(Path(*img_path.parts[3:]))
 
             pkl_write(pkl_path, save_dict, auto_mkdir=True)
 
@@ -251,6 +258,10 @@ def main():
             seq_name = seq_p.split("/")[-1].split(".")[0]
             sid = seq_p.split("/")[-2]
             out_name = f"{sid}_{seq_name}_{view_idx}"
+
+            if os.path.exists(os.path.join(SAVE_ROOT, sid, seq_name, f'{view_idx}_right', '{:05d}.pkl'.format(300))):
+                print('already found, skipping')
+                continue
 
             batch = viewer.load_data(seq_p, mano, object, smplx, no_image, distort, view_idx, subject_meta)
             # viewer.render_seq(batch, out_folder=op.join("render_out", out_name))
