@@ -95,6 +95,54 @@ def get_mano_rot_and_trans(camera_hand_verts, world2cam, mano_pose, mano_beta, w
     return ideal_rot, ideal_trans
 
 
+def project_3d_to_2d(intrinsics, pts_cam):
+    # Project points in 3D (camera space) to 2D (image space) using intrinsics matrix
+    assert intrinsics.shape == (3, 3)
+    assert pts_cam.shape[1] == 3
+    assert len(pts_cam.shape) == 2
+    pts2d_homo = np.matmul(intrinsics, pts_cam.T).T
+
+    pts2d = pts2d_homo[:, :2] / pts2d_homo[:, 2:3]  # remove homogeneous coordinate
+
+    return pts2d
+
+
+def get_crop_coords(hand_verts, intrinsics, image_size, crop_margin=400):
+    verts_2d = project_3d_to_2d(intrinsics, hand_verts)  # X, Y
+
+    # Use the mean of the hand verts
+    # mean_2d = verts_2d.mean(axis=0).round()
+    # crop_center_x = np.clip(int(mean_2d[0]), crop_margin, image_size[1] - crop_margin)
+    # crop_center_y = np.clip(int(mean_2d[1]), crop_margin, image_size[0] - crop_margin)
+
+    # Find the center of the min/max
+    verts_min = verts_2d.min(axis=0)
+    verts_max = verts_2d.max(axis=0)
+
+    center_x = int(round((verts_min[0] + verts_max[0]) / 2))
+    center_y = int(round((verts_min[1] + verts_max[1]) / 2))
+    crop_center_x = np.clip(center_x, crop_margin, image_size[1] - crop_margin)
+    crop_center_y = np.clip(center_y, crop_margin, image_size[0] - crop_margin)
+
+    crop_dict = dict()
+    crop_dict['min_x'] = crop_center_x - crop_margin
+    crop_dict['max_x'] = crop_center_x + crop_margin
+    crop_dict['min_y'] = crop_center_y - crop_margin
+    crop_dict['max_y'] = crop_center_y + crop_margin
+
+    new_intrinsics = intrinsics.copy()
+    new_intrinsics[0, 2] -= crop_dict['min_x']
+    new_intrinsics[1, 2] -= crop_dict['min_y']
+
+    out_of_frame = False
+    if verts_min[0] < 0 or verts_min[1] < 0:
+        out_of_frame = True
+    if verts_max[0] > image_size[1] or verts_max[1] > image_size[0]:
+        out_of_frame = True
+
+    return crop_dict, new_intrinsics, out_of_frame
+
+
 def construct_meshes(seq_p, layers, use_mano, use_object, use_smplx, no_image, use_distort, view_idx, subject_meta):
     # load
     data = np.load(seq_p, allow_pickle=True).item()
@@ -167,7 +215,6 @@ def construct_meshes(seq_p, layers, use_mano, use_object, use_smplx, no_image, u
 
         for i in range(num_frames):
             pkl_path = os.path.join(save_folder, '{:05d}.pkl'.format(i))
-            json_path = os.path.join(save_folder, '{:05d}.json'.format(i))
             img_path = os.path.join(save_folder, '{:05d}.jpg'.format(i))
 
             if view_idx == 0:
@@ -202,18 +249,21 @@ def construct_meshes(seq_p, layers, use_mano, use_object, use_smplx, no_image, u
             save_dict['seq_name'] = seq_name
             save_dict['view_idx'] = view_idx
 
-            img_path = Path(imgnames[i])
-            save_dict['orig_img_path'] = str(Path(*img_path.parts[3:]))
+            orig_img_path = Path(imgnames[i])
+            save_dict['orig_img_path'] = str(Path(*orig_img_path.parts[3:]))
+
+            crop_dict, new_intrinsics, out_of_frame = get_crop_coords(save_dict['hand_verts'], save_dict['intrinsics'], save_dict['image_size'])
+            if out_of_frame:
+                continue
 
             pkl_write(pkl_path, save_dict, auto_mkdir=True)
 
-            # for key in save_dict.keys():    # Convert all torch tensors to numpy for serialization
-            #     if isinstance(save_dict[key], np.ndarray):
-            #         save_dict[key] = save_dict[key].tolist()
-            #
-            # json_write(json_path, save_dict, auto_mkdir=True)
+            img = cv2.imread(imgnames[i])
+            img_cropped = img[crop_dict['min_y']:crop_dict['max_y'], crop_dict['min_x']:crop_dict['max_x'], :]
+            cv2.imwrite(img_path, img_cropped, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
 
-            shutil.copy(imgnames[i], img_path)  # TODO: Copy the image file. Will eventually make this a crop
+            # raw file copy
+            # shutil.copy(imgnames[i], img_path)
 
     return meshes, viewer_data
 
@@ -253,7 +303,7 @@ def main():
     all_processed_seqs = glob("./outputs/processed_verts/seqs/*/*.npy")
 
     for seq_idx, seq_p in enumerate(all_processed_seqs):
-        for view_idx in range(1, 9):
+        for view_idx in range(0, 9):
             print(f"Rendering seq#{seq_idx+1}, seq: {seq_p}, view: {view_idx}")
             seq_name = seq_p.split("/")[-1].split(".")[0]
             sid = seq_p.split("/")[-2]
