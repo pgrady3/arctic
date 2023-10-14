@@ -28,6 +28,8 @@ import shutil
 from src.utils.interfield import compute_dist_mano_to_obj
 from common.transforms import transform_points, solve_rigid_tf_np
 from common.rot import batch_rodrigues, rotation_matrix_to_angle_axis
+import multiprocessing as mp
+from tqdm import tqdm
 
 
 SAVE_ROOT = 'data/export'
@@ -115,6 +117,10 @@ def get_crop_coords(hand_verts, intrinsics, image_size, crop_margin=400):
     # crop_center_x = np.clip(int(mean_2d[0]), crop_margin, image_size[1] - crop_margin)
     # crop_center_y = np.clip(int(mean_2d[1]), crop_margin, image_size[0] - crop_margin)
 
+    if np.isnan(verts_2d).any():    # invalid projection somehow
+        print('Got invalid projection!')
+        return None, None, True
+
     # Find the center of the min/max
     verts_min = verts_2d.min(axis=0)
     verts_max = verts_2d.max(axis=0)
@@ -159,9 +165,7 @@ def construct_meshes(seq_p, layers, use_mano, use_object, use_smplx, no_image, u
     if view_idx == 0:
         K = torch.FloatTensor(data_params["K_ego"][0].copy())
     else:
-        K = torch.FloatTensor(
-            np.array(subject_meta[subject]["intris_mat"][view_idx - 1])
-        )
+        K = torch.FloatTensor(np.array(subject_meta[subject]["intris_mat"][view_idx - 1]))
 
     # image names
     vidx = np.arange(num_frames)
@@ -202,9 +206,10 @@ def construct_meshes(seq_p, layers, use_mano, use_object, use_smplx, no_image, u
 
     for hand in ['left', 'right']:
         save_folder = os.path.join(SAVE_ROOT, subject, seq_name, f'{view_idx}_{hand}')
-        if os.path.exists(os.path.join(save_folder, '{:05d}.pkl'.format(0))):
-            print('already found, skipping')
-            continue
+        # for i in range(num_frames):
+        #     if os.path.exists(os.path.join(save_folder, '{:05d}.pkl'.format(i))):
+        #         # print('already found, skipping')
+        #         continue
 
         hand_letter = hand[0]
 
@@ -217,14 +222,17 @@ def construct_meshes(seq_p, layers, use_mano, use_object, use_smplx, no_image, u
             pkl_path = os.path.join(save_folder, '{:05d}.pkl'.format(i))
             img_path = os.path.join(save_folder, '{:05d}.jpg'.format(i))
 
+            if os.path.exists(pkl_path) and os.path.exists(img_path):
+                continue
+
             if view_idx == 0:
                 world2cam = np.array(data['params']['world2ego'][i, :, :])
             elif 1 <= view_idx <= 8:
                 world2cam = np.array(subject_meta[subject]['world2cam'][view_idx - 1])
 
             save_dict = dict()
-            save_dict['intrinsics'] = K.numpy()
-            save_dict['image_size'] = [rows, cols]
+            save_dict['old_intrinsics'] = K.numpy()
+            save_dict['old_image_size'] = [rows, cols]
             # save_dict['extrinsics'] = Rt[i, :, :]
             save_dict['hand_verts'] = vis_dict[hand]['v3d'][i, :, :]
             # save_dict['hand_faces'] = vis_dict[hand]['f3d']
@@ -256,15 +264,19 @@ def construct_meshes(seq_p, layers, use_mano, use_object, use_smplx, no_image, u
             if view_idx == 0:   # If using the egocentric camera, do less cropping since the hands are much closer
                 crop_margin = 900
 
-            crop_dict, new_intrinsics, out_of_frame = get_crop_coords(save_dict['hand_verts'], save_dict['intrinsics'],
-                                                                      save_dict['image_size'], crop_margin=crop_margin)
+            crop_dict, new_intrinsics, out_of_frame = get_crop_coords(save_dict['hand_verts'], save_dict['old_intrinsics'],
+                                                                      save_dict['old_image_size'], crop_margin=crop_margin)
+
             if out_of_frame:
                 continue
 
-            pkl_write(pkl_path, save_dict, auto_mkdir=True)
-
             img = cv2.imread(imgnames[i])
             img_cropped = img[crop_dict['min_y']:crop_dict['max_y'], crop_dict['min_x']:crop_dict['max_x'], :]
+
+            save_dict['intrinsics'] = new_intrinsics
+            save_dict['image_size'] = img_cropped.shape[:2]
+
+            pkl_write(pkl_path, save_dict, auto_mkdir=True)
             cv2.imwrite(img_path, img_cropped, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
 
             # raw file copy
@@ -287,43 +299,47 @@ class DataViewer(ARCTICViewer):
         return batch
 
 
-def main():
-    with open("./data/arctic_data/data/meta/misc.json", "r") as f:
-        subject_meta = json.load(f)
+def save_seq(seq_p):
 
-    # args = parse_args()
+
+    for view_idx in range(0, 9):
+        print(f"Rendering seq: {seq_p}, view: {view_idx}")
+        construct_meshes(seq_p, layers, mano, object, smplx, no_image, distort, view_idx, subject_meta)
+
+
+def main():
     random.seed(1)
+
+    print('DISTORT IS FALSE!!-------------------------------------------------------')
+    # viewer = DataViewer(interactive=not headless, size=(2024, 2024))
+
+    all_processed_seqs = glob("./outputs/processed_verts/seqs/*/*.npy")
+    all_processed_seqs.sort()
+
+    parallel = False  # Set to true for increased speed, set to false for easier debugging
+    if parallel:
+        pool = mp.Pool(processes=12)  # Can crash server if too many threads
+        pool.map(save_seq, all_processed_seqs)
+    else:
+        for p in tqdm(all_processed_seqs):
+            save_seq(p)
+
+
+if __name__ == "__main__":
+    np.set_printoptions(precision=4, suppress=True)
+    global_layers = construct_layers('cpu')
+
     headless = False
     object = True
     mano = True
     smplx = False
     no_image = False
     distort = False
-    print('DISTORT IS FALSE!!-------------------------------------------------------')
 
-    dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    with open("./data/arctic_data/data/meta/misc.json", "r") as f:
+        subject_meta = json.load(f)
 
-    viewer = DataViewer(interactive=not headless, size=(2024, 2024))
-
-    all_processed_seqs = glob("./outputs/processed_verts/seqs/*/*.npy")
-
-    for seq_idx, seq_p in enumerate(all_processed_seqs):
-        for view_idx in range(0, 9):
-            print(f"Rendering seq#{seq_idx+1}, seq: {seq_p}, view: {view_idx}")
-            seq_name = seq_p.split("/")[-1].split(".")[0]
-            sid = seq_p.split("/")[-2]
-            out_name = f"{sid}_{seq_name}_{view_idx}"
-
-            if os.path.exists(os.path.join(SAVE_ROOT, sid, seq_name, f'{view_idx}_right', '{:05d}.pkl'.format(300))):
-                print('already found, skipping')
-                continue
-
-            batch = viewer.load_data(seq_p, mano, object, smplx, no_image, distort, view_idx, subject_meta)
-            # viewer.render_seq(batch, out_folder=op.join("render_out", out_name))
-
-
-if __name__ == "__main__":
-    np.set_printoptions(precision=4, suppress=True)
-    global_layers = construct_layers('cpu')
+    # dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    layers = construct_layers('cpu')
 
     main()
