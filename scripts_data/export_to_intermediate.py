@@ -32,7 +32,8 @@ import multiprocessing as mp
 from tqdm import tqdm
 
 
-SAVE_ROOT = 'data/export'
+SAVE_FINAL_ROOT = 'data/export'
+SAVE_TEMP_ROOT = 'data/export_temp'
 
 
 def json_write(path, data, auto_mkdir=False):
@@ -121,14 +122,18 @@ def get_crop_coords(hand_verts, intrinsics, image_size, crop_margin=400):
         print('Got invalid projection!')
         return None, None, True
 
-    # Find the center of the min/max
-    verts_min = verts_2d.min(axis=0)
-    verts_max = verts_2d.max(axis=0)
+    try:
+        # Find the center of the min/max
+        verts_min = verts_2d.min(axis=0)
+        verts_max = verts_2d.max(axis=0)
 
-    center_x = int(round((verts_min[0] + verts_max[0]) / 2))
-    center_y = int(round((verts_min[1] + verts_max[1]) / 2))
-    crop_center_x = np.clip(center_x, crop_margin, image_size[1] - crop_margin)
-    crop_center_y = np.clip(center_y, crop_margin, image_size[0] - crop_margin)
+        center_x = int(round((verts_min[0] + verts_max[0]) / 2))
+        center_y = int(round((verts_min[1] + verts_max[1]) / 2))
+        crop_center_x = np.clip(center_x, crop_margin, image_size[1] - crop_margin)
+        crop_center_y = np.clip(center_y, crop_margin, image_size[0] - crop_margin)
+    except:
+        print('Got invalid projection, error')
+        return None, None, True
 
     crop_dict = dict()
     crop_dict['min_x'] = crop_center_x - crop_margin
@@ -147,6 +152,26 @@ def get_crop_coords(hand_verts, intrinsics, image_size, crop_margin=400):
         out_of_frame = True
 
     return crop_dict, new_intrinsics, out_of_frame
+
+
+def subsample_image(img, intrinsics, factor=2):
+    subsample_image = img[::factor, ::factor, :]
+    new_intrinsics = intrinsics / factor    # when we subsample an image, the intrinsics are divided, except for homogeneous value
+    new_intrinsics[2, 2] = 1
+
+    return subsample_image, new_intrinsics
+
+
+def get_bbox(hand_verts, intrinsics):
+    verts_2d = project_3d_to_2d(intrinsics, hand_verts)  # X, Y
+
+    verts_min = verts_2d.min(axis=0)
+    verts_max = verts_2d.max(axis=0)
+
+    bbox_center = (verts_max + verts_min) / 2
+    bbox_size = verts_max - verts_min
+
+    return bbox_center.round().astype(int), bbox_size.round().astype(int)
 
 
 def construct_meshes(seq_p, layers, use_mano, use_object, use_smplx, no_image, use_distort, view_idx, subject_meta):
@@ -205,7 +230,7 @@ def construct_meshes(seq_p, layers, use_mano, use_object, use_smplx, no_image, u
     viewer_data = ViewerData(Rt, K, cols, rows, imgnames)
 
     for hand in ['left', 'right']:
-        save_folder = os.path.join(SAVE_ROOT, subject, seq_name, f'{view_idx}_{hand}')
+        save_folder = os.path.join(SAVE_TEMP_ROOT, subject, seq_name, f'{view_idx}_{hand}')
         # for i in range(num_frames):
         #     if os.path.exists(os.path.join(save_folder, '{:05d}.pkl'.format(i))):
         #         # print('already found, skipping')
@@ -214,16 +239,17 @@ def construct_meshes(seq_p, layers, use_mano, use_object, use_smplx, no_image, u
         hand_letter = hand[0]
 
         # Calcualte distance from each hand point to closest object
-        knn_hand_verts = torch.tensor(data['cam_coord'][f'verts.{hand}'][:, view_idx, :, :])
-        knn_obj_verts = torch.tensor(data['cam_coord'][f'verts.object'][:, view_idx, :, :])
+        knn_hand_verts = torch.tensor(data['cam_coord'][f'verts.{hand}'][:, view_idx, :, :]).cuda()
+        knn_obj_verts = torch.tensor(data['cam_coord'][f'verts.object'][:, view_idx, :, :]).cuda()
         knn_dists, knn_idx = compute_dist_mano_to_obj(knn_hand_verts, knn_obj_verts, None, -1, 100)
+        knn_dists = knn_dists.detach().cpu().numpy()
 
         for i in range(num_frames):
             pkl_path = os.path.join(save_folder, '{:05d}.pkl'.format(i))
             img_path = os.path.join(save_folder, '{:05d}.jpg'.format(i))
 
-            if os.path.exists(pkl_path) and os.path.exists(img_path):
-                continue
+            # if os.path.exists(pkl_path) and os.path.exists(img_path):
+            #     continue
 
             if view_idx == 0:
                 world2cam = np.array(data['params']['world2ego'][i, :, :])
@@ -231,18 +257,19 @@ def construct_meshes(seq_p, layers, use_mano, use_object, use_smplx, no_image, u
                 world2cam = np.array(subject_meta[subject]['world2cam'][view_idx - 1])
 
             save_dict = dict()
-            save_dict['old_intrinsics'] = K.numpy()
-            save_dict['old_image_size'] = [rows, cols]
+            old_intrinsics = K.numpy()
+            old_image_size = [rows, cols]
             # save_dict['extrinsics'] = Rt[i, :, :]
-            save_dict['hand_verts'] = vis_dict[hand]['v3d'][i, :, :]
             # save_dict['hand_faces'] = vis_dict[hand]['f3d']
-            save_dict['hand_joints'] = data['cam_coord'][f'joints.{hand}'][i, view_idx, :, :]
-            save_dict['hand_dist'] = knn_dists[i, :].numpy()
+
+            save_dict['mano_verts'] = vis_dict[hand]['v3d'][i, :, :]
+            save_dict['hand_joints_3d'] = data['cam_coord'][f'joints.{hand}'][i, view_idx, :, :]
+            save_dict['hand_dist'] = knn_dists[i, :]
 
             save_dict['mano_pose'] = data['params'][f'pose_{hand_letter}'][i, :]
             save_dict['mano_beta'] = data['params'][f'shape_{hand_letter}'][i, :]
 
-            solved_rot, solved_trans = get_mano_rot_and_trans(save_dict['hand_verts'],
+            solved_rot, solved_trans = get_mano_rot_and_trans(save_dict['mano_verts'],
                                                             world2cam,
                                                             save_dict['mano_pose'],
                                                             save_dict['mano_beta'],
@@ -255,26 +282,33 @@ def construct_meshes(seq_p, layers, use_mano, use_object, use_smplx, no_image, u
             save_dict['hand'] = hand
             save_dict['subject'] = subject
             save_dict['seq_name'] = seq_name
-            save_dict['view_idx'] = view_idx
+            save_dict['camera_idx'] = view_idx
+            save_dict['timestep'] = i
+            save_dict['has_pose'] = True
+            save_dict['has_beta'] = True
 
             orig_img_path = Path(imgnames[i])
-            save_dict['orig_img_path'] = str(Path(*orig_img_path.parts[3:]))
+            save_dict['image_orig_path'] = str(Path(*orig_img_path.parts[3:]))
 
             crop_margin = 400
             if view_idx == 0:   # If using the egocentric camera, do less cropping since the hands are much closer
                 crop_margin = 900
 
-            crop_dict, new_intrinsics, out_of_frame = get_crop_coords(save_dict['hand_verts'], save_dict['old_intrinsics'],
-                                                                      save_dict['old_image_size'], crop_margin=crop_margin)
+            crop_dict, new_intrinsics, out_of_frame = get_crop_coords(save_dict['mano_verts'], old_intrinsics,
+                                                                      old_image_size, crop_margin=crop_margin)
 
             if out_of_frame:
                 continue
 
             img = cv2.imread(imgnames[i])
             img_cropped = img[crop_dict['min_y']:crop_dict['max_y'], crop_dict['min_x']:crop_dict['max_x'], :]
+            if view_idx == 0:   # if we're using the egocentric camera, subsample image 2x
+                img_cropped, new_intrinsics = subsample_image(img_cropped, new_intrinsics, factor=2)
 
             save_dict['intrinsics'] = new_intrinsics
             save_dict['image_size'] = img_cropped.shape[:2]
+            save_dict['bbox_center'], save_dict['bbox_size'] = get_bbox(save_dict['mano_verts'], save_dict['intrinsics'])
+            save_dict['hand_joints_2d'] = project_3d_to_2d(save_dict['intrinsics'], save_dict['hand_joints_3d'])
 
             pkl_write(pkl_path, save_dict, auto_mkdir=True)
             cv2.imwrite(img_path, img_cropped, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
@@ -300,21 +334,32 @@ class DataViewer(ARCTICViewer):
 
 
 def save_seq(seq_p):
+    subject = seq_p.split("/")[-2]
+    seq_name = seq_p.split("/")[-1].split(".")[0]
 
+    final_save_path = os.path.join(SAVE_FINAL_ROOT, subject, seq_name)
+    tmp_save_path = os.path.join(SAVE_TEMP_ROOT, subject, seq_name)
+
+    if os.path.exists(final_save_path):
+        print('Already found sequence, skipping', seq_p)
+        return
 
     for view_idx in range(0, 9):
         print(f"Rendering seq: {seq_p}, view: {view_idx}")
         construct_meshes(seq_p, layers, mano, object, smplx, no_image, distort, view_idx, subject_meta)
 
+    shutil.move(tmp_save_path, final_save_path)     # Move the file to the new dir
+    print('Finished moving', final_save_path)
+
 
 def main():
-    random.seed(1)
+    # random.seed(1)
 
     print('DISTORT IS FALSE!!-------------------------------------------------------')
     # viewer = DataViewer(interactive=not headless, size=(2024, 2024))
 
     all_processed_seqs = glob("./outputs/processed_verts/seqs/*/*.npy")
-    all_processed_seqs.sort()
+    random.shuffle(all_processed_seqs)
 
     parallel = False  # Set to true for increased speed, set to false for easier debugging
     if parallel:
@@ -339,7 +384,7 @@ if __name__ == "__main__":
     with open("./data/arctic_data/data/meta/misc.json", "r") as f:
         subject_meta = json.load(f)
 
-    # dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    layers = construct_layers('cpu')
+    dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    layers = construct_layers(dev)
 
     main()
