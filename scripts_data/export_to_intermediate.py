@@ -34,6 +34,7 @@ from tqdm import tqdm
 
 SAVE_FINAL_ROOT = 'data/export'
 SAVE_TEMP_ROOT = 'data/export_temp'
+SUBSAMPLES_FRAMES = 4
 
 
 def json_write(path, data, auto_mkdir=False):
@@ -244,7 +245,7 @@ def construct_meshes(seq_p, layers, use_mano, use_object, use_smplx, no_image, u
         knn_dists, knn_idx = compute_dist_mano_to_obj(knn_hand_verts, knn_obj_verts, None, -1, 100)
         knn_dists = knn_dists.detach().cpu().numpy()
 
-        for i in range(num_frames):
+        for i in range(0, num_frames, SUBSAMPLES_FRAMES):
             pkl_path = os.path.join(save_folder, '{:05d}.pkl'.format(i))
             img_path = os.path.join(save_folder, '{:05d}.jpg'.format(i))
 
@@ -319,18 +320,18 @@ def construct_meshes(seq_p, layers, use_mano, use_object, use_smplx, no_image, u
     return meshes, viewer_data
 
 
-class DataViewer(ARCTICViewer):
-    def __init__(self, render_types=["rgb", "depth", "mask"], interactive=True, size=(2024, 2024)):
-        dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.layers = construct_layers(dev)
-        super().__init__(render_types, interactive, size)
-
-    def load_data(self, seq_p, use_mano, use_object, use_smplx, no_image, use_distort, view_idx, subject_meta):
-        # from src.mesh_loaders.arctic import construct_meshes
-
-        batch = construct_meshes(seq_p, self.layers, use_mano, use_object, use_smplx, no_image, use_distort, view_idx, subject_meta)
-        self.check_format(batch)
-        return batch
+# class DataViewer(ARCTICViewer):
+#     def __init__(self, render_types=["rgb", "depth", "mask"], interactive=True, size=(2024, 2024)):
+#         dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+#         self.layers = construct_layers(dev)
+#         super().__init__(render_types, interactive, size)
+#
+#     def load_data(self, seq_p, use_mano, use_object, use_smplx, no_image, use_distort, view_idx, subject_meta):
+#         # from src.mesh_loaders.arctic import construct_meshes
+#
+#         batch = construct_meshes(seq_p, self.layers, use_mano, use_object, use_smplx, no_image, use_distort, view_idx, subject_meta)
+#         self.check_format(batch)
+#         return batch
 
 
 def save_seq(seq_p):
