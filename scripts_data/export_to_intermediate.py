@@ -302,6 +302,9 @@ def construct_meshes(seq_p, layers, use_mano, use_object, use_smplx, no_image, u
                 continue
 
             img = cv2.imread(imgnames[i])
+            if img is None:
+                continue
+
             img_cropped = img[crop_dict['min_y']:crop_dict['max_y'], crop_dict['min_x']:crop_dict['max_x'], :]
             if view_idx == 0:   # if we're using the egocentric camera, subsample image 2x
                 img_cropped, new_intrinsics = subsample_image(img_cropped, new_intrinsics, factor=2)
